@@ -1,0 +1,33 @@
+app-id: com.onevolume.OneVolume
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+
+command: onevolume
+
+finish-args:
+  # Desktop display
+  - --socket=wayland
+  - --socket=fallback-x11
+
+  # Audio
+  - --socket=pulseaudio
+
+  # Native PipeWire socket
+  - --filesystem=xdg-run/pipewire-0
+
+  # Desktop portals
+  - --talk-name=org.freedesktop.portal.*
+
+modules:
+  - name: onevolume
+    buildsystem: simple
+
+    build-commands:
+      - install -Dm755 target/release/onevolume /app/bin/onevolume
+      - install -Dm644 packaging/com.onevolume.OneVolume.desktop /app/share/applications/com.onevolume.OneVolume.desktop
+      - install -Dm644 packaging/icons/com.onevolume.OneVolume.svg /app/share/icons/hicolor/scalable/apps/com.onevolume.OneVolume.svg
+
+    sources:
+      - type: dir
+        path: ..

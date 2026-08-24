@@ -1,0 +1,17 @@
+pub const SUPPORTED_APPS: &[&str] = &[
+    "Firefox",
+    "Brave",
+    "Chromium",
+    "Google Chrome",
+    "Microsoft Edge",
+    "VLC",
+    "mpv",
+    "Celluloid",
+    "Haruna",
+    "SMPlayer",
+    "Kodi",
+    "Jellyfin",
+    "Plex",
+    "Spotify",
+    "Discord",
+];

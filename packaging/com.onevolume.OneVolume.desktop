@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=OneVolume
+Comment=Set the volume once
+Exec=onevolume
+Icon=com.onevolume.OneVolume
+Terminal=true
+Type=Application
+Categories=AudioVideo;Audio;
+StartupNotify=true

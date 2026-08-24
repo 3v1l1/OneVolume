@@ -4,88 +4,157 @@ use std::time::Duration;
 
 use gtk::glib;
 use gtk::prelude::*;
-use gtk::{Align, Application, ApplicationWindow, Box, Button, Frame, Label, Orientation};
+use gtk::{
+    Align, Application, ApplicationWindow, Box, Button, Frame, Label, Orientation, ProgressBar,
+};
 
 use crate::backend::events::PipeWireEvent;
 use crate::backend::service::PipeWireService;
 
 pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
-    // =========================
-    // Title
-    // =========================
+    // ============================================================
+    // State
+    // ============================================================
+
+    let enabled = Rc::new(Cell::new(true));
+
+    // ============================================================
+    // Header
+    // ============================================================
 
     let title = Label::builder()
         .label("🎬 OneVolume")
         .halign(Align::Start)
         .build();
 
+    title.add_css_class("title-1");
+
     let subtitle = Label::builder()
-        .label("Set the volume once.")
+        .label("Keep your volume steady.")
         .halign(Align::Start)
         .build();
 
-    // =========================
-    // Watching
-    // =========================
+    subtitle.add_css_class("dim-label");
 
-    let watching_title = Label::builder()
-        .label("<b>Watching</b>")
-        .use_markup(true)
-        .halign(Align::Start)
+    let header = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(4)
         .build();
 
-    let watching = Label::builder()
-        .label("No active media")
-        .halign(Align::Start)
-        .build();
+    header.append(&title);
+    header.append(&subtitle);
 
-    // =========================
+    // ============================================================
     // Status
-    // =========================
-
-    let status_title = Label::builder()
-        .label("<b>Status</b>")
-        .use_markup(true)
-        .halign(Align::Start)
-        .build();
+    // ============================================================
 
     let status = Label::builder()
         .label("🟡 Watching — nothing playing")
         .halign(Align::Start)
         .build();
 
-    // =========================
-    // Loudness
-    // =========================
+    status.add_css_class("status");
 
-    let loudness_title = Label::builder()
-        .label("<b>Loudness</b>")
-        .use_markup(true)
+    // ============================================================
+    // Currently Playing
+    // ============================================================
+
+    let watching_label = Label::builder()
+        .label("CURRENTLY PLAYING")
         .halign(Align::Start)
         .build();
+
+    watching_label.add_css_class("caption-heading");
+
+    let watching = Label::builder()
+        .label("No active media")
+        .halign(Align::Start)
+        .build();
+
+    watching.add_css_class("heading");
+
+    let media_box = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(6)
+        .margin_top(14)
+        .margin_bottom(14)
+        .margin_start(16)
+        .margin_end(16)
+        .build();
+
+    media_box.append(&watching_label);
+    media_box.append(&watching);
+
+    let media_frame = Frame::builder().child(&media_box).build();
+
+    // ============================================================
+    // Loudness
+    // ============================================================
+
+    let loudness_heading = Label::builder()
+        .label("LOUDNESS")
+        .halign(Align::Start)
+        .build();
+
+    loudness_heading.add_css_class("caption-heading");
 
     let loudness = Label::builder().label("— dB").halign(Align::Start).build();
 
-    // =========================
-    // Gain
-    // =========================
+    loudness.add_css_class("metric");
 
-    let gain_title = Label::builder()
-        .label("<b>Gain</b>")
-        .use_markup(true)
+    let loudness_bar = ProgressBar::builder()
+        .fraction(0.0)
+        .show_text(false)
+        .hexpand(true)
+        .build();
+
+    let loudness_box = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .build();
+
+    loudness_box.append(&loudness_heading);
+    loudness_box.append(&loudness);
+    loudness_box.append(&loudness_bar);
+
+    // ============================================================
+    // Gain
+    // ============================================================
+
+    let gain_heading = Label::builder()
+        .label("ONEVOLUME ADJUSTMENT")
         .halign(Align::Start)
         .build();
 
-    let gain = Label::builder().label("— dB").halign(Align::Start).build();
+    gain_heading.add_css_class("caption-heading");
 
-    // =========================
+    let gain = Label::builder()
+        .label("0.0 dB")
+        .halign(Align::Start)
+        .build();
+
+    gain.add_css_class("metric");
+
+    let gain_box = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .margin_top(18)
+        .build();
+
+    gain_box.append(&gain_heading);
+    gain_box.append(&gain);
+
+    // ============================================================
     // Enable / Disable
-    // =========================
+    // ============================================================
 
-    // Backend starts enabled, so the UI starts in the matching state.
-    let enabled = Rc::new(Cell::new(true));
+    let enable_button = Button::builder()
+        .label("Disable OneVolume")
+        .hexpand(true)
+        .height_request(42)
+        .build();
 
-    let enable_button = Button::builder().label("Disable").build();
+    enable_button.add_css_class("suggested-action");
 
     let service_for_button = service.clone();
     let enabled_for_button = enabled.clone();
@@ -98,62 +167,52 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
         service_for_button.set_enabled(new_enabled);
 
         if new_enabled {
-            button.set_label("Disable");
+            button.set_label("Disable OneVolume");
             status_for_button.set_label("🟢 Active — waiting for media");
+            button.add_css_class("suggested-action");
         } else {
-            button.set_label("Enable");
+            button.set_label("Enable OneVolume");
             status_for_button.set_label("⏸️ Disabled — normal volume restored");
+            button.remove_css_class("suggested-action");
         }
     });
 
-    // =========================
-    // Diagnostics Button
-    // =========================
+    // ============================================================
+    // Diagnostics
+    // ============================================================
 
-    let diagnostics_button = Button::builder().label("▶ Diagnostics").build();
+    let diagnostics_button = Button::builder()
+        .label("▶ Diagnostics")
+        .halign(Align::Start)
+        .build();
 
-    // =========================
-    // Diagnostics Panel
-    // =========================
+    diagnostics_button.add_css_class("flat");
 
     let diagnostics_box = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(6)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(8)
-        .margin_end(8)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(12)
+        .margin_end(12)
         .build();
-
-    diagnostics_box.append(
-        &Label::builder()
-            .label("✓ UI Loaded")
-            .halign(Align::Start)
-            .build(),
-    );
 
     let diag_pipewire = Label::builder()
         .label("○ Waiting for PipeWire...")
         .halign(Align::Start)
         .build();
 
-    diagnostics_box.append(&diag_pipewire);
-
     let diag_media = Label::builder()
         .label("○ Waiting for media...")
         .halign(Align::Start)
         .build();
 
+    diagnostics_box.append(&diag_pipewire);
     diagnostics_box.append(&diag_media);
 
     let diagnostics_frame = Frame::builder().child(&diagnostics_box).build();
 
-    // Hidden by default.
     diagnostics_frame.set_visible(false);
-
-    // =========================
-    // Diagnostics Toggle
-    // =========================
 
     let frame = diagnostics_frame.clone();
     let button = diagnostics_button.clone();
@@ -170,54 +229,44 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
         }
     });
 
-    // =========================
+    // ============================================================
     // Main Layout
-    // =========================
+    // ============================================================
 
-    let layout = Box::builder()
+    let content = Box::builder()
         .orientation(Orientation::Vertical)
-        .spacing(15)
-        .margin_top(20)
-        .margin_bottom(20)
-        .margin_start(20)
-        .margin_end(20)
+        .spacing(18)
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
         .build();
 
-    layout.append(&title);
-    layout.append(&subtitle);
+    content.append(&header);
+    content.append(&status);
+    content.append(&media_frame);
+    content.append(&loudness_box);
+    content.append(&gain_box);
+    content.append(&enable_button);
+    content.append(&diagnostics_button);
+    content.append(&diagnostics_frame);
 
-    layout.append(&watching_title);
-    layout.append(&watching);
-
-    layout.append(&status_title);
-    layout.append(&status);
-
-    layout.append(&loudness_title);
-    layout.append(&loudness);
-
-    layout.append(&gain_title);
-    layout.append(&gain);
-
-    layout.append(&enable_button);
-
-    layout.append(&diagnostics_button);
-    layout.append(&diagnostics_frame);
-
-    // =========================
+    // ============================================================
     // Window
-    // =========================
+    // ============================================================
 
     let window = ApplicationWindow::builder()
         .application(app)
         .title("OneVolume")
-        .default_width(600)
-        .default_height(450)
-        .child(&layout)
+        .default_width(560)
+        .default_height(520)
+        .resizable(false)
+        .child(&content)
         .build();
 
-    // =========================
+    // ============================================================
     // Live State Polling
-    // =========================
+    // ============================================================
 
     let watching_for_timer = watching.clone();
     let status_for_timer = status.clone();
@@ -225,6 +274,7 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
     let gain_for_timer = gain.clone();
     let enable_button_for_timer = enable_button.clone();
     let enabled_for_timer = enabled.clone();
+    let loudness_bar_for_timer = loudness_bar.clone();
 
     glib::timeout_add_local(Duration::from_millis(500), move || {
         for event in service.poll() {
@@ -234,6 +284,7 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                 }
 
                 PipeWireEvent::StateUpdate(state) => {
+                    // Current application
                     match &state.current_app {
                         Some(app_name) => {
                             watching_for_timer.set_label(app_name);
@@ -246,17 +297,20 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                         }
                     }
 
-                    // Keep the button synchronized with the backend.
+                    // Enable state
                     if state.enabled != enabled_for_timer.get() {
                         enabled_for_timer.set(state.enabled);
 
-                        enable_button_for_timer.set_label(if state.enabled {
-                            "Disable"
+                        if state.enabled {
+                            enable_button_for_timer.set_label("Disable OneVolume");
+                            enable_button_for_timer.add_css_class("suggested-action");
                         } else {
-                            "Enable"
-                        });
+                            enable_button_for_timer.set_label("Enable OneVolume");
+                            enable_button_for_timer.remove_css_class("suggested-action");
+                        }
                     }
 
+                    // Status
                     if !state.enabled {
                         status_for_timer.set_label("⏸️ Disabled — normal volume restored");
                     } else if state.capture_running {
@@ -268,8 +322,15 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                         status_for_timer.set_label("🟡 Watching — nothing playing");
                     }
 
+                    // Loudness
                     loudness_for_timer.set_label(&format!("{:.1} dB", state.loudness_db));
 
+                    // Convert roughly -60 dB → 0% and 0 dB → 100%.
+                    let loudness_fraction = ((state.loudness_db + 60.0) / 60.0).clamp(0.0, 1.0);
+
+                    loudness_bar_for_timer.set_fraction(loudness_fraction as f64);
+
+                    // Gain
                     gain_for_timer.set_label(&format!("{:+.1} dB", state.gain_db));
                 }
             }

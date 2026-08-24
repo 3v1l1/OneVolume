@@ -45,7 +45,7 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
     header.append(&subtitle);
 
     // ============================================================
-    // Status
+    // Main status
     // ============================================================
 
     let status = Label::builder()
@@ -53,7 +53,7 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
         .halign(Align::Start)
         .build();
 
-    status.add_css_class("status");
+    status.add_css_class("heading");
 
     // ============================================================
     // Currently Playing
@@ -71,15 +71,15 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
         .halign(Align::Start)
         .build();
 
-    watching.add_css_class("heading");
+    watching.add_css_class("title-2");
 
     let media_box = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(6)
-        .margin_top(14)
-        .margin_bottom(14)
-        .margin_start(16)
-        .margin_end(16)
+        .margin_top(16)
+        .margin_bottom(16)
+        .margin_start(18)
+        .margin_end(18)
         .build();
 
     media_box.append(&watching_label);
@@ -100,12 +100,13 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
 
     let loudness = Label::builder().label("— dB").halign(Align::Start).build();
 
-    loudness.add_css_class("metric");
+    loudness.add_css_class("title-2");
 
     let loudness_bar = ProgressBar::builder()
         .fraction(0.0)
         .show_text(false)
         .hexpand(true)
+        .height_request(8)
         .build();
 
     let loudness_box = Box::builder()
@@ -133,12 +134,12 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
         .halign(Align::Start)
         .build();
 
-    gain.add_css_class("metric");
+    gain.add_css_class("title-2");
 
     let gain_box = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(8)
-        .margin_top(18)
+        .margin_top(10)
         .build();
 
     gain_box.append(&gain_heading);
@@ -151,7 +152,7 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
     let enable_button = Button::builder()
         .label("Disable OneVolume")
         .hexpand(true)
-        .height_request(42)
+        .height_request(44)
         .build();
 
     enable_button.add_css_class("suggested-action");
@@ -168,12 +169,12 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
 
         if new_enabled {
             button.set_label("Disable OneVolume");
-            status_for_button.set_label("🟢 Active — waiting for media");
             button.add_css_class("suggested-action");
+            status_for_button.set_label("🟢 Active — waiting for media");
         } else {
             button.set_label("Enable OneVolume");
-            status_for_button.set_label("⏸️ Disabled — normal volume restored");
             button.remove_css_class("suggested-action");
+            status_for_button.set_label("⏸️ Disabled — normal volume restored");
         }
     });
 
@@ -190,11 +191,11 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
 
     let diagnostics_box = Box::builder()
         .orientation(Orientation::Vertical)
-        .spacing(6)
+        .spacing(8)
         .margin_top(10)
         .margin_bottom(10)
-        .margin_start(12)
-        .margin_end(12)
+        .margin_start(14)
+        .margin_end(14)
         .build();
 
     let diag_pipewire = Label::builder()
@@ -215,17 +216,17 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
     diagnostics_frame.set_visible(false);
 
     let frame = diagnostics_frame.clone();
-    let button = diagnostics_button.clone();
+    let diagnostics_toggle = diagnostics_button.clone();
 
     diagnostics_button.connect_clicked(move |_| {
         let visible = frame.is_visible();
 
         if visible {
             frame.set_visible(false);
-            button.set_label("▶ Diagnostics");
+            diagnostics_toggle.set_label("▶ Diagnostics");
         } else {
             frame.set_visible(true);
-            button.set_label("▼ Diagnostics");
+            diagnostics_toggle.set_label("▼ Diagnostics");
         }
     });
 
@@ -236,10 +237,10 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
     let content = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(18)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
+        .margin_top(26)
+        .margin_bottom(26)
+        .margin_start(26)
+        .margin_end(26)
         .build();
 
     content.append(&header);
@@ -284,7 +285,10 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                 }
 
                 PipeWireEvent::StateUpdate(state) => {
+                    // ------------------------------------------------
                     // Current application
+                    // ------------------------------------------------
+
                     match &state.current_app {
                         Some(app_name) => {
                             watching_for_timer.set_label(app_name);
@@ -297,7 +301,10 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                         }
                     }
 
+                    // ------------------------------------------------
                     // Enable state
+                    // ------------------------------------------------
+
                     if state.enabled != enabled_for_timer.get() {
                         enabled_for_timer.set(state.enabled);
 
@@ -310,7 +317,10 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                         }
                     }
 
-                    // Status
+                    // ------------------------------------------------
+                    // Main status
+                    // ------------------------------------------------
+
                     if !state.enabled {
                         status_for_timer.set_label("⏸️ Disabled — normal volume restored");
                     } else if state.capture_running {
@@ -322,15 +332,23 @@ pub fn build_ui(app: &Application, service: Rc<PipeWireService>) {
                         status_for_timer.set_label("🟡 Watching — nothing playing");
                     }
 
+                    // ------------------------------------------------
                     // Loudness
+                    // ------------------------------------------------
+
                     loudness_for_timer.set_label(&format!("{:.1} dB", state.loudness_db));
 
-                    // Convert roughly -60 dB → 0% and 0 dB → 100%.
+                    // Map approximately:
+                    // -60 dB = 0%
+                    //   0 dB = 100%
                     let loudness_fraction = ((state.loudness_db + 60.0) / 60.0).clamp(0.0, 1.0);
 
                     loudness_bar_for_timer.set_fraction(loudness_fraction as f64);
 
+                    // ------------------------------------------------
                     // Gain
+                    // ------------------------------------------------
+
                     gain_for_timer.set_label(&format!("{:+.1} dB", state.gain_db));
                 }
             }

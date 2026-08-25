@@ -236,9 +236,15 @@ pub fn start_global_capture(
             last_tick = now;
 
             // Allow strong peaks to influence the detector.
+            //
+            // The raw peak is intentionally passed through a peak follower first:
+            // peaks rise immediately for fast blast protection, but decay gradually
+            // so individual ~20 ms buffers cannot make the detector release too fast.
+            let smoothed_peak_db = leveler.follow_peak(peak_db, dt);
+
             const PEAK_HEADROOM_DB: f32 = 6.0;
 
-            let detector_db = level_db.max(peak_db - PEAK_HEADROOM_DB);
+            let detector_db = level_db.max(smoothed_peak_db - PEAK_HEADROOM_DB);
 
             let gain_db = if enabled {
                 leveler.process(detector_db, dt)

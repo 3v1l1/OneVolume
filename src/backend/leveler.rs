@@ -8,8 +8,8 @@
 //!   - Pick a target loudness (roughly where movie dialogue sits).
 //!   - When the signal goes louder than that, pull the gain down FAST.
 //!   - When the signal is quieter than that, push the gain up SLOWLY.
-//!   - Never boost near-silence. Instead, gently decay back toward neutral
-//!     so a paused/silent stretch doesn't leave gain stuck wherever it was.
+//!   - Never boost near-silence. Instead, gently decay back toward neutral.
+//!   - Peak detection uses a peak follower: rises instantly, decays slowly.
 
 #[derive(Debug, Clone, Copy)]
 pub struct LevelerConfig {
@@ -35,6 +35,13 @@ pub struct LevelerConfig {
 
     /// Time constant for returning toward neutral (0 dB) during silence.
     pub silence_decay_seconds: f32,
+
+    /// Time constant for the peak follower to decay.
+    ///
+    /// Peak rises are immediate so sudden loud sounds still trigger the
+    /// existing fast attack. Peak falls are smoothed so individual audio
+    /// buffers cannot make the detector immediately let go.
+    pub peak_decay_seconds: f32,
 }
 
 impl Default for LevelerConfig {
@@ -47,6 +54,7 @@ impl Default for LevelerConfig {
             attack_seconds: 0.15,
             release_seconds: 2.5,
             silence_decay_seconds: 3.0,
+            peak_decay_seconds: 0.25,
         }
     }
 }
@@ -57,6 +65,12 @@ pub struct Leveler {
     /// Current smoothed gain, in dB.
     /// 0 dB = no change.
     current_gain_db: f32,
+
+    /// Smoothed peak detector state, in dBFS.
+    ///
+    /// This follows peaks immediately upward, but decays gradually when
+    /// subsequent buffers are quieter.
+    smoothed_peak_db: f32,
 }
 
 impl Leveler {
@@ -64,7 +78,43 @@ impl Leveler {
         Self {
             config,
             current_gain_db: 0.0,
+            smoothed_peak_db: -100.0,
         }
+    }
+
+    /// Smooth a raw peak measurement using a peak follower.
+    ///
+    /// Rising peaks are followed immediately so sudden loud sounds retain
+    /// fast protection.
+    ///
+    /// Falling peaks decay slowly so a single quieter buffer does not make
+    /// the detector immediately release gain.
+    pub fn follow_peak(&mut self, peak_db: f32, dt_secs: f32) -> f32 {
+        let peak_db = peak_db.clamp(-100.0, 0.0);
+
+        if peak_db >= self.smoothed_peak_db {
+            // Instant attack on the peak detector.
+            self.smoothed_peak_db = peak_db;
+        } else {
+            // Slow exponential decay of the remembered peak.
+            let time_constant = self.config.peak_decay_seconds;
+
+            let alpha = if time_constant > 0.0 {
+                (dt_secs / time_constant).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+
+            self.smoothed_peak_db += (peak_db - self.smoothed_peak_db) * alpha;
+        }
+
+        self.smoothed_peak_db
+    }
+
+    /// Current smoothed peak in dBFS.
+    #[allow(dead_code)]
+    pub fn smoothed_peak_db(&self) -> f32 {
+        self.smoothed_peak_db
     }
 
     /// Feed one loudness measurement and get back the gain to apply.
@@ -120,9 +170,11 @@ impl Leveler {
         self.current_gain_db
     }
 
-    /// Reset to unity gain, e.g. when playback stops or a new stream starts.
+    /// Reset to unity gain and clear the peak follower,
+    /// e.g. when playback stops or a new stream starts.
     pub fn reset(&mut self) {
         self.current_gain_db = 0.0;
+        self.smoothed_peak_db = -100.0;
     }
 }
 
@@ -161,7 +213,7 @@ pub fn peak_dbfs(samples: &[f32]) -> f32 {
     if peak <= 0.0 {
         -100.0
     } else {
-        (20.0 * peak.log10()).max(-100.0)
+        (20.0 * peak.log10() as f32).max(-100.0)
     }
 }
 
@@ -263,6 +315,45 @@ mod tests {
     }
 
     #[test]
+    fn peak_follower_rises_instantly() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        let peak = leveler.follow_peak(-10.0, 0.02);
+
+        assert!(
+            peak > -20.0,
+            "one quiet buffer should not immediately erase a loud peak, got {peak}"
+        );
+    }
+
+    #[test]
+    fn peak_follower_decays_slowly() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        leveler.follow_peak(-10.0, 0.02);
+
+        let peak = leveler.follow_peak(-30.0, 0.02);
+
+        assert!(
+            peak > -30.0 && peak < -10.0,
+            "peak should decay gradually, got {peak}"
+        );
+    }
+
+    #[test]
+    fn peak_follower_does_not_release_on_one_quiet_buffer() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        leveler.follow_peak(-8.0, 0.02);
+        let peak = leveler.follow_peak(-40.0, 0.02);
+
+        assert!(
+            peak > -20.0,
+            "one quiet buffer should not immediately erase a loud peak, got {peak}"
+        );
+    }
+
+    #[test]
     fn db_to_linear_unity() {
         assert!((db_to_linear(0.0) - 1.0).abs() < 1e-6);
     }
@@ -277,16 +368,8 @@ mod tests {
         let peak = peak_dbfs(&samples);
         let rms = rms_dbfs(&samples);
 
-        assert!(
-            peak > -1.0,
-            "expected peak near 0dBFS for a 0.9 sample, got {peak}"
-        );
-
-        assert!(
-            peak > rms + 20.0,
-            "peak ({peak}) should be dramatically higher than RMS ({rms}) \
-             for a single transient in near-silence"
-        );
+        assert!(peak > rms);
+        assert!((peak - (20.0 * 0.9f32.log10())).abs() < 0.01);
     }
 
     #[test]

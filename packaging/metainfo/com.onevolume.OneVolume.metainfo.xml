@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.onevolume.OneVolume</id>
+
+  <name>OneVolume</name>
+  <summary>Keep movie and media volume levels comfortable</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+
+  <description>
+    <p>
+      OneVolume is a Linux desktop application that automatically manages
+      media volume levels using PipeWire.
+    </p>
+    <p>
+      It is designed to reduce sudden loud volume changes while watching
+      movies, videos, and other media.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.onevolume.OneVolume.desktop</launchable>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Utility</category>
+  </categories>
+
+  <url type="homepage">https://github.com/3v1l1/OneVolume</url>
+
+  <provides>
+    <binary>onevolume</binary>
+  </provides>
+</component>

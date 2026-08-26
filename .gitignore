@@ -3,3 +3,14 @@
 /build-dir/
 *.flatpak
 /repo/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store

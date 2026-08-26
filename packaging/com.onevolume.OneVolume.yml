@@ -16,8 +16,6 @@ finish-args:
   # Native PipeWire socket
   - --filesystem=xdg-run/pipewire-0
 
-  # Desktop portals
-  - --talk-name=org.freedesktop.portal.*
 
 modules:
   - name: onevolume

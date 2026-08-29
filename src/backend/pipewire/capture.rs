@@ -17,7 +17,8 @@ use libspa::utils::Direction;
 
 use super::runtime::SharedRuntime;
 use crate::backend::events::{LiveState, PipeWireEvent, UiCommand};
-use crate::backend::leveler::{Leveler, LevelerConfig, db_to_linear, peak_dbfs, rms_dbfs};
+use crate::backend::leveler::{Leveler, LevelerConfig, db_to_linear, peak_dbfs};
+use crate::backend::peak_limiter::{PeakLimiter, PeakLimiterConfig};
 
 /// Build the audio format pod and connect the capture stream.
 fn connect_stream(stream: &StreamRc) -> Result<(), Box<dyn std::error::Error>> {
@@ -76,10 +77,18 @@ pub fn start_global_capture(
     let mut enabled = true;
 
     let mut leveler = Leveler::new(leveler_config);
+    let mut peak_limiter = PeakLimiter::new(PeakLimiterConfig::default());
 
     let mut last_tick = Instant::now();
     let mut last_apply = Instant::now();
     let mut last_debug_print = Instant::now();
+
+    // Stage 1 loudness window: accumulate RMS energy for ~400 ms.
+    let mut loudness_sum_sq = 0.0_f64;
+    let mut loudness_samples = 0usize;
+    let mut loudness_window_elapsed = 0.0_f32;
+    let mut last_loudness_db = -100.0_f32;
+    const LOUDNESS_WINDOW_SECONDS: f32 = 0.8;
 
     let mut printed_first_buffer = false;
     let mut session_peak_db = -100.0_f32;
@@ -100,23 +109,23 @@ pub fn start_global_capture(
     let _listener = stream
         .add_local_listener_with_user_data(())
         .param_changed(|_stream, _data, id, pod| {
-            if id == ParamType::Format.as_raw() {
-                if let Some(pod) = pod {
-                    let mut info = AudioInfoRaw::new();
+            if id == ParamType::Format.as_raw()
+                && let Some(pod) = pod
+            {
+                let mut info = AudioInfoRaw::new();
 
-                    match info.parse(pod) {
-                        Ok(_) => {
-                            println!(
-                                "🔧 Negotiated format: {:?} | {} ch | {} Hz",
-                                info.format(),
-                                info.channels(),
-                                info.rate()
-                            );
-                        }
+                match info.parse(pod) {
+                    Ok(_) => {
+                        println!(
+                            "🔧 Negotiated format: {:?} | {} ch | {} Hz",
+                            info.format(),
+                            info.channels(),
+                            info.rate()
+                        );
+                    }
 
-                        Err(err) => {
-                            println!("🔧 Format param changed but couldn't parse it: {err:?}");
-                        }
+                    Err(err) => {
+                        println!("🔧 Format param changed but couldn't parse it: {err:?}");
                     }
                 }
             }
@@ -132,7 +141,12 @@ pub fn start_global_capture(
                 .take_leveler_reset_request()
             {
                 leveler.reset();
+                peak_limiter.reset();
                 session_peak_db = -100.0;
+                loudness_sum_sq = 0.0;
+                loudness_samples = 0;
+                loudness_window_elapsed = 0.0;
+                last_loudness_db = -100.0;
 
                 println!("🎚️ Leveler reset to neutral gain");
             }
@@ -146,6 +160,11 @@ pub fn start_global_capture(
 
                             // Always reset when toggling.
                             leveler.reset();
+                            peak_limiter.reset();
+                            loudness_sum_sq = 0.0;
+                            loudness_samples = 0;
+                            loudness_window_elapsed = 0.0;
+                            last_loudness_db = -100.0;
                             session_peak_db = -100.0;
 
                             if enabled {
@@ -164,7 +183,6 @@ pub fn start_global_capture(
                 return;
             }
 
-            let mut level_db = -100.0_f32;
             let mut peak_db = -100.0_f32;
 
             // PipeWire may give us more than one data block.
@@ -196,10 +214,15 @@ pub fn start_global_capture(
                     continue;
                 }
 
-                let rms = rms_dbfs(samples);
-                let peak = peak_dbfs(samples);
+                // Accumulate RMS energy for the sustained loudness detector.
+                // This produces a true time-windowed RMS instead of reacting
+                // to whichever ~20 ms buffer happens to be loudest.
+                let sum_sq: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
 
-                level_db = level_db.max(rms);
+                loudness_sum_sq += sum_sq;
+                loudness_samples += samples.len();
+
+                let peak = peak_dbfs(samples);
                 peak_db = peak_db.max(peak);
 
                 if !printed_first_buffer {
@@ -218,7 +241,7 @@ pub fn start_global_capture(
                 }
             }
 
-            if level_db <= -99.9 && peak_db <= -99.9 {
+            if loudness_samples == 0 && peak_db <= -99.9 {
                 return;
             }
 
@@ -235,38 +258,69 @@ pub fn start_global_capture(
 
             last_tick = now;
 
-            // Allow strong peaks to influence the detector.
-            //
-            // The raw peak is intentionally passed through a peak follower first:
-            // peaks rise immediately for fast blast protection, but decay gradually
-            // so individual ~20 ms buffers cannot make the detector release too fast.
-            let smoothed_peak_db = leveler.follow_peak(peak_db, dt);
+            // Stage 1: sustained loudness control uses a ~400 ms
+            // windowed RMS measurement.
+            loudness_window_elapsed += dt;
 
-            const PEAK_HEADROOM_DB: f32 = 6.0;
+            let window_ready = loudness_window_elapsed >= LOUDNESS_WINDOW_SECONDS;
 
-            let detector_db = level_db.max(smoothed_peak_db - PEAK_HEADROOM_DB);
+            let windowed_level_db = if window_ready && loudness_samples > 0 {
+                let mean_sq = loudness_sum_sq / loudness_samples as f64;
+                let rms = mean_sq.sqrt();
 
-            let gain_db = if enabled {
-                leveler.process(detector_db, dt)
+                loudness_sum_sq = 0.0;
+                loudness_samples = 0;
+                loudness_window_elapsed = 0.0;
+
+                last_loudness_db = if rms > 0.0 {
+                    (20.0 * rms.log10() as f32).max(-100.0)
+                } else {
+                    -100.0
+                };
+
+                Some(last_loudness_db)
+            } else {
+                None
+            };
+
+            let loudness_gain_db = if let Some(level_db) = windowed_level_db {
+                if enabled {
+                    leveler.process(level_db, LOUDNESS_WINDOW_SECONDS)
+                } else {
+                    0.0
+                }
+            } else if enabled {
+                leveler.current_gain_db()
             } else {
                 0.0
             };
+
+            // Stage 2: fast peak protection.
+            // Feed the raw peak directly to the limiter so sudden blasts,
+            // explosions, gunshots, and yelling can trigger protection
+            // immediately without being delayed by the RMS leveler.
+            let peak_gain_db = if enabled {
+                peak_limiter.process(peak_db, dt)
+            } else {
+                0.0
+            };
+
+            // Stage 1 and Stage 2 operate independently; their dB corrections add.
+            let gain_db = (loudness_gain_db + peak_gain_db).clamp(-30.0, 6.0);
 
             let running_nodes = runtime_for_closure.borrow().running_leveled_nodes();
 
             // UI/debug update once per second.
             if now.duration_since(last_debug_print).as_secs_f32() >= 1.0 {
-                let peak_driven = detector_db > level_db + 0.5;
-
                 println!(
                     "🎧 Speaker meter: RMS {:.1} dB | Peak {:.1} dB \
-                     (session max {:.1} dB) | detector {:.1} dB{} | \
-                     gain {:+.1} dB | {} node(s) receiving it",
-                    level_db,
+                     (session max {:.1} dB) | loudness gain {:+.1} dB | \
+                     peak gain {:+.1} dB | final {:+.1} dB | {} node(s) receiving it",
+                    last_loudness_db,
                     peak_db,
                     session_peak_db,
-                    detector_db,
-                    if peak_driven { " (peak-driven)" } else { "" },
+                    loudness_gain_db,
+                    peak_gain_db,
                     gain_db,
                     running_nodes.len()
                 );
@@ -279,7 +333,7 @@ pub fn start_global_capture(
                     capture_running: true,
                     current_app,
                     active_stream_count: running_nodes.len(),
-                    loudness_db: level_db,
+                    loudness_db: last_loudness_db,
                     gain_db,
                     enabled,
                 };

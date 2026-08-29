@@ -1,60 +1,47 @@
-//! Automatic level control ("night mode").
-//!
-//! This is the brain of OneVolume. It does not touch PipeWire directly —
-//! you feed it a loudness measurement (in dBFS) at a steady tick rate,
-//! and it hands back the volume multiplier to apply to the stream.
-//!
-//! The idea:
-//!   - Pick a target loudness (roughly where movie dialogue sits).
-//!   - When the signal goes louder than that, pull the gain down FAST.
-//!   - When the signal is quieter than that, push the gain up SLOWLY.
-//!   - Never boost near-silence. Instead, gently decay back toward neutral.
-//!   - Peak detection uses a peak follower: rises instantly, decays slowly.
-
 #[derive(Debug, Clone, Copy)]
 pub struct LevelerConfig {
-    /// Target loudness in dBFS.
+    /// Desired long-term loudness in dBFS.
     pub target_db: f32,
 
-    /// Maximum amount the gain may reduce loud content, in dB.
+    /// Maximum attenuation for sustained loud content.
     pub max_cut_db: f32,
 
-    /// Maximum amount the gain may boost quiet content, in dB.
-    /// Kept modest so whispers don't turn into amplified hiss.
-    /// This is also the practical hard ceiling used by capture.rs.
+    /// Maximum boost for quiet but non-silent content.
     pub max_boost_db: f32,
 
-    /// Anything quieter than this is treated as silence/noise floor.
+    /// Below this level, treat the signal as silence/noise floor.
     pub gate_threshold_db: f32,
 
-    /// Time constant for reacting to loud content.
+    /// How quickly sustained loud content is pulled down.
     pub attack_seconds: f32,
 
-    /// Time constant for recovering after loud content.
+    /// How slowly the leveler recovers toward more gain.
     pub release_seconds: f32,
 
-    /// Time constant for returning toward neutral (0 dB) during silence.
+    /// How quickly gain returns toward 0 dB during silence.
     pub silence_decay_seconds: f32,
-
-    /// Time constant for the peak follower to decay.
-    ///
-    /// Peak rises are immediate so sudden loud sounds still trigger the
-    /// existing fast attack. Peak falls are smoothed so individual audio
-    /// buffers cannot make the detector immediately let go.
-    pub peak_decay_seconds: f32,
 }
 
 impl Default for LevelerConfig {
     fn default() -> Self {
         Self {
             target_db: -20.0,
-            max_cut_db: 18.0,
+
+            // Main leveler handles sustained scene differences.
+            max_cut_db: 15.0,
+
+            // Quiet dialogue is now allowed to come up substantially.
             max_boost_db: 6.0,
+
+            // Do not amplify true silence/noise floor.
             gate_threshold_db: -55.0,
-            attack_seconds: 0.15,
-            release_seconds: 2.5,
+
+            // Smooth scene transitions.
+            attack_seconds: 0.75,
+            release_seconds: 2.0,
+
+            // Return toward unity during actual silence.
             silence_decay_seconds: 3.0,
-            peak_decay_seconds: 0.25,
         }
     }
 }
@@ -62,15 +49,7 @@ impl Default for LevelerConfig {
 pub struct Leveler {
     config: LevelerConfig,
 
-    /// Current smoothed gain, in dB.
-    /// 0 dB = no change.
     current_gain_db: f32,
-
-    /// Smoothed peak detector state, in dBFS.
-    ///
-    /// This follows peaks immediately upward, but decays gradually when
-    /// subsequent buffers are quieter.
-    smoothed_peak_db: f32,
 }
 
 impl Leveler {
@@ -78,70 +57,28 @@ impl Leveler {
         Self {
             config,
             current_gain_db: 0.0,
-            smoothed_peak_db: -100.0,
         }
     }
 
-    /// Smooth a raw peak measurement using a peak follower.
+    /// Process a short-term loudness measurement and return gain in dB.
     ///
-    /// Rising peaks are followed immediately so sudden loud sounds retain
-    /// fast protection.
-    ///
-    /// Falling peaks decay slowly so a single quieter buffer does not make
-    /// the detector immediately release gain.
-    pub fn follow_peak(&mut self, peak_db: f32, dt_secs: f32) -> f32 {
-        let peak_db = peak_db.clamp(-100.0, 0.0);
-
-        if peak_db >= self.smoothed_peak_db {
-            // Instant attack on the peak detector.
-            self.smoothed_peak_db = peak_db;
-        } else {
-            // Slow exponential decay of the remembered peak.
-            let time_constant = self.config.peak_decay_seconds;
-
-            let alpha = if time_constant > 0.0 {
-                (dt_secs / time_constant).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
-
-            self.smoothed_peak_db += (peak_db - self.smoothed_peak_db) * alpha;
-        }
-
-        self.smoothed_peak_db
-    }
-
-    /// Current smoothed peak in dBFS.
-    #[allow(dead_code)]
-    pub fn smoothed_peak_db(&self) -> f32 {
-        self.smoothed_peak_db
-    }
-
-    /// Feed one loudness measurement and get back the gain to apply.
-    ///
-    /// `level_db` — measured loudness of the current audio window, in dBFS.
-    ///
-    /// `dt_secs` — time in seconds since the last call.
-    ///
-    /// Returns the smoothed gain in dB. Convert with `db_to_linear`
-    /// to get the multiplier to apply to the stream's volume.
+    /// Quiet non-silent material is boosted.
+    /// Sustained loud material is attenuated.
+    /// Silence is never boosted.
     pub fn process(&mut self, level_db: f32, dt_secs: f32) -> f32 {
         let cfg = &self.config;
+        let level_db = level_db.clamp(-100.0, 0.0);
 
-        let is_silent = level_db < cfg.gate_threshold_db;
-
-        let (desired_gain_db, time_constant) = if is_silent {
-            // Silence/gap: decay toward neutral rather than freezing
-            // at whatever gain was last active.
+        let (desired_gain_db, time_constant) = if level_db < cfg.gate_threshold_db {
+            // Actual silence: never amplify it.
             (0.0, cfg.silence_decay_seconds)
         } else {
             let error_db = cfg.target_db - level_db;
+
             let desired = error_db.clamp(-cfg.max_cut_db, cfg.max_boost_db);
 
-            // Fast attack when we need less gain than we currently have
-            // (something got loud).
-            // Slow release when we need more gain
-            // (audio is calming down or getting quiet).
+            // Moving toward more attenuation = attack.
+            // Moving toward more boost = release.
             let time_constant = if desired < self.current_gain_db {
                 cfg.attack_seconds
             } else {
@@ -151,7 +88,6 @@ impl Leveler {
             (desired, time_constant)
         };
 
-        // Exponential approach toward the desired gain.
         let alpha = if time_constant > 0.0 {
             (dt_secs / time_constant).clamp(0.0, 1.0)
         } else {
@@ -163,46 +99,21 @@ impl Leveler {
         self.current_gain_db
     }
 
-    /// Current smoothed gain in dB.
-    /// Used by diagnostics/tests.
-    #[allow(dead_code)]
     pub fn current_gain_db(&self) -> f32 {
         self.current_gain_db
     }
 
-    /// Reset to unity gain and clear the peak follower,
-    /// e.g. when playback stops or a new stream starts.
     pub fn reset(&mut self) {
         self.current_gain_db = 0.0;
-        self.smoothed_peak_db = -100.0;
     }
 }
 
-/// Convert a dB value to a linear multiplier (1.0 = unity).
+/// Convert dB to a linear multiplier.
 pub fn db_to_linear(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
-/// Compute the RMS loudness of an interleaved f32 sample buffer, in dBFS.
-/// Returns a very low number (effectively -inf, clamped) for silence.
-pub fn rms_dbfs(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return -100.0;
-    }
-
-    let sum_sq: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
-
-    let mean_sq = sum_sq / samples.len() as f64;
-    let rms = mean_sq.sqrt();
-
-    if rms <= 0.0 {
-        -100.0
-    } else {
-        (20.0 * rms.log10() as f32).max(-100.0)
-    }
-}
-
-/// The single loudest sample in this buffer, in dBFS.
+/// The loudest sample in a buffer, in dBFS.
 pub fn peak_dbfs(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return -100.0;
@@ -213,7 +124,7 @@ pub fn peak_dbfs(samples: &[f32]) -> f32 {
     if peak <= 0.0 {
         -100.0
     } else {
-        (20.0 * peak.log10() as f32).max(-100.0)
+        (20.0 * peak.log10()).max(-100.0)
     }
 }
 
@@ -224,25 +135,44 @@ mod tests {
     #[test]
     fn holds_unity_gain_at_target_level() {
         let mut leveler = Leveler::new(LevelerConfig::default());
-        let target = LevelerConfig::default().target_db;
 
-        for _ in 0..50 {
-            leveler.process(target, 0.05);
+        for _ in 0..100 {
+            leveler.process(-20.0, 0.05);
         }
 
-        assert!(leveler.current_gain_db().abs() < 0.5);
+        assert!(leveler.current_gain_db().abs() < 0.1);
     }
 
     #[test]
-    fn pulls_down_fast_on_loud_blast() {
+    fn boosts_quiet_dialogue() {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
-        // One tick of a very loud blast (0 dBFS).
-        let gain = leveler.process(0.0, 0.15);
+        for _ in 0..100 {
+            leveler.process(-35.0, 0.1);
+        }
 
-        // Attack time constant is 0.15s, so after exactly one attack
-        // period we should have moved most of the way toward the max cut.
-        assert!(gain < -10.0, "expected a strong cut, got {gain}");
+        assert!(
+            leveler.current_gain_db() > 5.0,
+            "quiet dialogue should be boosted, got {} dB",
+            leveler.current_gain_db()
+        );
+
+        assert!(leveler.current_gain_db() <= 6.0);
+    }
+
+    #[test]
+    fn suppresses_sustained_loud_content() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            leveler.process(-5.0, 0.1);
+        }
+
+        assert!(
+            leveler.current_gain_db() < -10.0,
+            "loud content should be strongly attenuated, got {} dB",
+            leveler.current_gain_db()
+        );
     }
 
     #[test]
@@ -250,7 +180,7 @@ mod tests {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-90.0, 0.05);
+            leveler.process(-90.0, 0.1);
         }
 
         assert!(
@@ -261,95 +191,24 @@ mod tests {
     }
 
     #[test]
-    fn decays_to_neutral_during_silence() {
+    fn recovers_to_neutral_during_silence() {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
-        // Get gain up to a non-zero value first.
-        for _ in 0..200 {
-            leveler.process(-35.0, 0.1);
+        for _ in 0..100 {
+            leveler.process(-5.0, 0.1);
         }
 
-        let gain_before_silence = leveler.current_gain_db();
+        let before = leveler.current_gain_db();
 
-        assert!(
-            gain_before_silence > 1.0,
-            "expected meaningful boost before silence test, got {gain_before_silence}"
-        );
-
-        // Silence should immediately start pulling gain down.
-        let gain_after_one_tick = leveler.process(-90.0, 0.1);
-
-        assert!(
-            gain_after_one_tick < gain_before_silence,
-            "expected gain to start decaying during silence, got \
-             {gain_after_one_tick} (was {gain_before_silence})"
-        );
-
-        // Sustained silence should eventually return to neutral.
         for _ in 0..200 {
             leveler.process(-90.0, 0.1);
         }
 
+        assert!(before < -1.0);
         assert!(
             leveler.current_gain_db().abs() < 0.1,
-            "expected gain to decay to ~0dB after sustained silence, got {}",
+            "expected recovery to unity, got {}",
             leveler.current_gain_db()
-        );
-    }
-
-    #[test]
-    fn boosts_quiet_dialogue_gradually() {
-        let mut leveler = Leveler::new(LevelerConfig::default());
-
-        // Quiet dialogue at -35 dBFS, target is -20 dBFS.
-        let gain_after_one_tick = leveler.process(-35.0, 0.1);
-
-        assert!(gain_after_one_tick > 0.0 && gain_after_one_tick < 2.0);
-
-        for _ in 0..200 {
-            leveler.process(-35.0, 0.1);
-        }
-
-        // Error is +15dB, clamped to the +6dB maximum boost.
-        assert!((leveler.current_gain_db() - 6.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn peak_follower_rises_instantly() {
-        let mut leveler = Leveler::new(LevelerConfig::default());
-
-        let peak = leveler.follow_peak(-10.0, 0.02);
-
-        assert!(
-            peak > -20.0,
-            "one quiet buffer should not immediately erase a loud peak, got {peak}"
-        );
-    }
-
-    #[test]
-    fn peak_follower_decays_slowly() {
-        let mut leveler = Leveler::new(LevelerConfig::default());
-
-        leveler.follow_peak(-10.0, 0.02);
-
-        let peak = leveler.follow_peak(-30.0, 0.02);
-
-        assert!(
-            peak > -30.0 && peak < -10.0,
-            "peak should decay gradually, got {peak}"
-        );
-    }
-
-    #[test]
-    fn peak_follower_does_not_release_on_one_quiet_buffer() {
-        let mut leveler = Leveler::new(LevelerConfig::default());
-
-        leveler.follow_peak(-8.0, 0.02);
-        let peak = leveler.follow_peak(-40.0, 0.02);
-
-        assert!(
-            peak > -20.0,
-            "one quiet buffer should not immediately erase a loud peak, got {peak}"
         );
     }
 
@@ -359,16 +218,12 @@ mod tests {
     }
 
     #[test]
-    fn peak_dbfs_finds_a_single_loud_sample() {
-        // Mostly quiet, one sharp transient — the kind of event
-        // RMS can hide.
+    fn peak_dbfs_finds_single_loud_sample() {
         let mut samples = vec![0.01f32; 1000];
         samples[500] = 0.9;
 
         let peak = peak_dbfs(&samples);
-        let rms = rms_dbfs(&samples);
 
-        assert!(peak > rms);
         assert!((peak - (20.0 * 0.9f32.log10())).abs() < 0.01);
     }
 

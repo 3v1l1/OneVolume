@@ -41,7 +41,7 @@ impl Default for LevelerConfig {
             release_seconds: 2.0,
 
             // Return toward unity during actual silence.
-            silence_decay_seconds: 3.0,
+            silence_decay_seconds: 1.5,
         }
     }
 }
@@ -99,6 +99,7 @@ impl Leveler {
         self.current_gain_db
     }
 
+    #[cfg(test)]
     pub fn current_gain_db(&self) -> f32 {
         self.current_gain_db
     }
@@ -158,6 +159,24 @@ mod tests {
         );
 
         assert!(leveler.current_gain_db() <= 6.0);
+    }
+
+    #[test]
+    fn attack_moves_gradually_with_small_dt() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        let first = leveler.process(0.0, 0.05);
+        let second = leveler.process(0.0, 0.05);
+
+        assert!(first > -1.01, "first step should be gradual, got {first}");
+        assert!(
+            second < first,
+            "gain should continue moving toward attenuation"
+        );
+        assert!(
+            second > -3.0,
+            "attack should not jump several dB in 50ms, got {second}"
+        );
     }
 
     #[test]

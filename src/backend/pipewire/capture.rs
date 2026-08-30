@@ -83,12 +83,10 @@ pub fn start_global_capture(
     let mut last_apply = Instant::now();
     let mut last_debug_print = Instant::now();
 
-    // Stage 1 loudness window: accumulate RMS energy for ~400 ms.
-    let mut loudness_sum_sq = 0.0_f64;
-    let mut loudness_samples = 0usize;
-    let mut loudness_window_elapsed = 0.0_f32;
+    // Stage 1 loudness detector: exponentially smoothed RMS power.
+    let mut loudness_mean_sq = 0.0_f64;
     let mut last_loudness_db = -100.0_f32;
-    const LOUDNESS_WINDOW_SECONDS: f32 = 0.8;
+    const LOUDNESS_SMOOTHING_SECONDS: f32 = 0.8;
 
     let mut printed_first_buffer = false;
     let mut session_peak_db = -100.0_f32;
@@ -143,9 +141,7 @@ pub fn start_global_capture(
                 leveler.reset();
                 peak_limiter.reset();
                 session_peak_db = -100.0;
-                loudness_sum_sq = 0.0;
-                loudness_samples = 0;
-                loudness_window_elapsed = 0.0;
+                loudness_mean_sq = 0.0;
                 last_loudness_db = -100.0;
 
                 println!("🎚️ Leveler reset to neutral gain");
@@ -161,9 +157,7 @@ pub fn start_global_capture(
                             // Always reset when toggling.
                             leveler.reset();
                             peak_limiter.reset();
-                            loudness_sum_sq = 0.0;
-                            loudness_samples = 0;
-                            loudness_window_elapsed = 0.0;
+                            loudness_mean_sq = 0.0;
                             last_loudness_db = -100.0;
                             session_peak_db = -100.0;
 
@@ -184,6 +178,8 @@ pub fn start_global_capture(
             }
 
             let mut peak_db = -100.0_f32;
+            let mut buffer_sum_sq = 0.0_f64;
+            let mut buffer_samples = 0usize;
 
             // PipeWire may give us more than one data block.
             for data in datas.iter_mut() {
@@ -214,13 +210,11 @@ pub fn start_global_capture(
                     continue;
                 }
 
-                // Accumulate RMS energy for the sustained loudness detector.
-                // This produces a true time-windowed RMS instead of reacting
-                // to whichever ~20 ms buffer happens to be loudest.
+                // Measure RMS power for this audio callback.
                 let sum_sq: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
 
-                loudness_sum_sq += sum_sq;
-                loudness_samples += samples.len();
+                buffer_sum_sq += sum_sq;
+                buffer_samples += samples.len();
 
                 let peak = peak_dbfs(samples);
                 peak_db = peak_db.max(peak);
@@ -241,7 +235,7 @@ pub fn start_global_capture(
                 }
             }
 
-            if loudness_samples == 0 && peak_db <= -99.9 {
+            if buffer_samples == 0 && peak_db <= -99.9 {
                 return;
             }
 
@@ -258,39 +252,27 @@ pub fn start_global_capture(
 
             last_tick = now;
 
-            // Stage 1: sustained loudness control uses a ~400 ms
-            // windowed RMS measurement.
-            loudness_window_elapsed += dt;
+            // Stage 1: exponentially smooth RMS power over roughly 0.8s.
+            if buffer_samples > 0 {
+                let buffer_mean_sq = buffer_sum_sq / buffer_samples as f64;
 
-            let window_ready = loudness_window_elapsed >= LOUDNESS_WINDOW_SECONDS;
+                let alpha = if LOUDNESS_SMOOTHING_SECONDS > 0.0 {
+                    1.0_f64 - (-f64::from(dt) / f64::from(LOUDNESS_SMOOTHING_SECONDS)).exp()
+                } else {
+                    1.0
+                };
 
-            let windowed_level_db = if window_ready && loudness_samples > 0 {
-                let mean_sq = loudness_sum_sq / loudness_samples as f64;
-                let rms = mean_sq.sqrt();
+                loudness_mean_sq += (buffer_mean_sq - loudness_mean_sq) * alpha.clamp(0.0, 1.0);
 
-                loudness_sum_sq = 0.0;
-                loudness_samples = 0;
-                loudness_window_elapsed = 0.0;
-
-                last_loudness_db = if rms > 0.0 {
-                    (20.0 * rms.log10() as f32).max(-100.0)
+                last_loudness_db = if loudness_mean_sq > 0.0 {
+                    (10.0 * loudness_mean_sq.log10() as f32).max(-100.0)
                 } else {
                     -100.0
                 };
+            }
 
-                Some(last_loudness_db)
-            } else {
-                None
-            };
-
-            let loudness_gain_db = if let Some(level_db) = windowed_level_db {
-                if enabled {
-                    leveler.process(level_db, LOUDNESS_WINDOW_SECONDS)
-                } else {
-                    0.0
-                }
-            } else if enabled {
-                leveler.current_gain_db()
+            let loudness_gain_db = if enabled {
+                leveler.process(last_loudness_db, dt)
             } else {
                 0.0
             };
@@ -313,7 +295,7 @@ pub fn start_global_capture(
             // UI/debug update once per second.
             if now.duration_since(last_debug_print).as_secs_f32() >= 1.0 {
                 println!(
-                    "🎧 Speaker meter: RMS {:.1} dB | Peak {:.1} dB \
+                    "🎧 Speaker meter: Smoothed RMS {:.1} dB | Current Peak {:.1} dB \
                      (session max {:.1} dB) | loudness gain {:+.1} dB | \
                      peak gain {:+.1} dB | final {:+.1} dB | {} node(s) receiving it",
                     last_loudness_db,

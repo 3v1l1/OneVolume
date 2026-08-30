@@ -10,6 +10,9 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
 
+  # Graphics acceleration
+  - --device=dri
+
   # Audio
   - --socket=pulseaudio
 

@@ -16,7 +16,7 @@ pub struct PeakLimiterConfig {
 impl Default for PeakLimiterConfig {
     fn default() -> Self {
         Self {
-            threshold_db: -12.0,
+            threshold_db: -8.0,
             max_cut_db: 12.0,
             attack_seconds: 0.01,
             release_seconds: 0.50,

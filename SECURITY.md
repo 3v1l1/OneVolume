@@ -22,14 +22,14 @@ Please avoid including passwords, private keys, personal information, or other s
 
 ## Supported Versions
 
-OneVolume is currently in alpha development.
+OneVolume is currently in beta development.
 
-Security fixes are primarily provided for the latest development release.
+Security fixes are primarily provided for the latest release.
 
 | Version | Supported |
 | --- | --- |
-| Latest alpha | ✅ |
-| Older alpha releases | ⚠️ Best effort |
+| Latest beta | ✅ |
+| Older beta / alpha releases | ⚠️ Best effort |
 | Unreleased development builds | ❌ |
 
 ## Disclosure

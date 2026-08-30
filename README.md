@@ -9,7 +9,7 @@ Built with:
 - PipeWire
 - Flatpak
 
-OneVolume continuously monitors the audio level of active media and dynamically adjusts gain to make loud and quiet sections more comfortable to listen to.
+OneVolume continuously analyzes the audio level of active media locally and dynamically adjusts gain to make loud and quiet sections more comfortable to listen to.
 
 > ⚠️ **Beta software:** OneVolume is currently in beta development. Bugs, unexpected behavior, and incomplete functionality may still occur.
 
@@ -115,7 +115,7 @@ flatpak run com.onevolume.OneVolume
 
 ## Verify the Download
 
-OneVolume releases provide both a SHA-256 checksum and a public GPG signing key.
+OneVolume releases provide SHA-256 checksums, and release tags are GPG-signed.
 
 ### SHA-256
 
@@ -378,10 +378,8 @@ For changes affecting audio processing, testing with real media playback is stro
 
 Released Flatpak builds are accompanied by:
 
-- SHA-256 checksum
-- Public GPG signing key
-- GPG-signed Git tags
-- GPG-signed development commits
+- SHA-256 checksums
+- GPG-signed Git release tags
 
 GitHub Releases:
 

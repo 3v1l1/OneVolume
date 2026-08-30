@@ -11,7 +11,7 @@ Built with:
 
 OneVolume continuously monitors the audio level of active media and dynamically adjusts gain to make loud and quiet sections more comfortable to listen to.
 
-> ⚠️ **Alpha software:** OneVolume is currently an early development release. Bugs, unexpected behavior, and incomplete functionality are expected.
+> ⚠️ **Beta software:** OneVolume is currently in beta development. Bugs, unexpected behavior, and incomplete functionality may still occur.
 
 ---
 
@@ -26,8 +26,7 @@ OneVolume continuously monitors the audio level of active media and dynamically 
 - 🎬 Designed for movies, trailers, videos, and other media
 - 🖥️ GTK4 desktop interface
 - 📦 Flatpak packaging
-- 🔐 GPG-signed Flatpak release
-- 🔑 Public GPG signing key
+- 🔐 GPG-signed Git release tags
 - #️⃣ SHA-256 release checksum
 
 ---
@@ -138,19 +137,15 @@ The checksum confirms that the downloaded Flatpak matches the exact file publish
 
 ### GPG Verification
 
-The release also includes the public OneVolume signing key.
+Release tags are GPG-signed so the tagged source history can be authenticated.
 
-Import the public key:
+Verify a tag with:
 
 ```bash
-gpg --import onevolume-signing-key.asc
+git verify-tag v0.4.0-beta.1
 ```
 
-The release Flatpak is built from a GPG-signed Flatpak repository and distributed with the public signing key.
-
-The public signing key can be obtained from the corresponding GitHub release.
-
-Never publish or share your private GPG key. Only the public key should be distributed.
+Never publish or share your private GPG key.
 
 ## Build From Source
 
@@ -302,9 +297,8 @@ The current application manifest grants access to:
 - X11 fallback
 - PulseAudio compatibility
 - Native PipeWire socket
-- Freedesktop desktop portals
 
-These permissions are required for the application's graphical interface and audio functionality.
+These permissions are required for the application's graphical interface, hardware-accelerated rendering, and audio functionality.
 
 OneVolume does not require unrestricted filesystem access.
 
@@ -323,9 +317,9 @@ Media detection and audio behavior are still under active development.
 
 ## Current Status
 
-### Alpha
+### Beta
 
-OneVolume is currently in the **0.1.0-alpha** development stage.
+OneVolume is currently in the **0.4.0-beta.1** development stage.
 
 Current functionality includes:
 
@@ -341,10 +335,10 @@ Current functionality includes:
 - Firefox media testing
 - Brave media testing
 - Flatpak packaging
-- GPG-signed releases
+- GPG-signed Git release tags
 - SHA-256 release verification
 
-The application is functional, but the audio-leveling algorithm is still being tuned and tested.
+The application is functional, but the audio-leveling algorithm continues to be tested and refined.
 
 ---
 

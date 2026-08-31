@@ -11,3 +11,4 @@ pipewire = "0.9"
 libspa = "0.9"
 
 anyhow = "1.0"
+libpulse-binding = "2.30.1"

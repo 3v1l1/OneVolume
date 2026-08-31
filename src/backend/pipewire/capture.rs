@@ -24,6 +24,7 @@ use super::sidechain::SidechainFilter;
 use crate::backend::events::{LiveState, PipeWireEvent, UiCommand};
 use crate::backend::leveler::{Leveler, LevelerConfig, db_to_linear, peak_dbfs};
 use crate::backend::peak_limiter::{PeakLimiter, PeakLimiterConfig};
+use crate::backend::pulse::PulseController;
 
 /// Build the audio format pod and connect the capture stream.
 fn connect_stream(stream: &StreamRc) -> Result<(), Box<dyn std::error::Error>> {
@@ -72,6 +73,15 @@ pub fn start_global_capture(
 
     let dry_run = std::env::var("ONEVOLUME_DRY_RUN").is_ok();
 
+    let use_pulse_control = std::env::var_os("ONEVOLUME_PULSE_CONTROL").is_some();
+
+    let pulse_controller = if use_pulse_control {
+        println!("🔊 Pulse VLC control enabled");
+        Some(PulseController::start())
+    } else {
+        None
+    };
+
     if dry_run {
         println!("🧪 DRY RUN MODE — computing gain but NOT touching real volume");
     }
@@ -87,6 +97,7 @@ pub fn start_global_capture(
     let mut last_tick = Instant::now();
     let mut last_apply = Instant::now();
     let mut last_debug_print = Instant::now();
+    let mut last_pulse_gain: Option<f32> = None;
 
     // Stage 1 loudness detector: exponentially smoothed RMS power from
     // the detector-only sidechain.
@@ -118,6 +129,7 @@ pub fn start_global_capture(
     let stream = StreamRc::new(core.clone(), "onevolume-meter", props)?;
 
     let runtime_for_closure = runtime.clone();
+    let pulse_for_closure = pulse_controller.clone();
 
     let format_sample_rate = negotiated_sample_rate.clone();
     let format_channels = negotiated_channels.clone();
@@ -395,6 +407,19 @@ pub fn start_global_capture(
                         gain_db,
                         running_nodes.len()
                     );
+                } else if let Some(pulse) = &pulse_for_closure {
+                    let app_name = runtime_for_closure.borrow().current_running_app_name();
+
+                    if let Some(app_name) = app_name.as_deref() {
+                        let changed = last_pulse_gain
+                            .map(|last| (gain_db - last).abs() >= 0.05)
+                            .unwrap_or(true);
+
+                        if changed {
+                            last_pulse_gain = Some(gain_db);
+                            pulse.set_gain_db(app_name, gain_db);
+                        }
+                    }
                 } else {
                     for (_id, node) in &running_nodes {
                         apply_volume(node, 2, multiplier);

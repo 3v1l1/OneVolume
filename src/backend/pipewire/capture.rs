@@ -1,6 +1,10 @@
 //! Connects the Leveler brain to a real PipeWire monitor stream.
 
-use std::sync::mpsc::Sender;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+    mpsc::Sender,
+};
 use std::time::Instant;
 
 use pipewire::{
@@ -16,6 +20,7 @@ use libspa::pod::{Object, Pod, Value};
 use libspa::utils::Direction;
 
 use super::runtime::SharedRuntime;
+use super::sidechain::SidechainFilter;
 use crate::backend::events::{LiveState, PipeWireEvent, UiCommand};
 use crate::backend::leveler::{Leveler, LevelerConfig, db_to_linear, peak_dbfs};
 use crate::backend::peak_limiter::{PeakLimiter, PeakLimiterConfig};
@@ -83,10 +88,20 @@ pub fn start_global_capture(
     let mut last_apply = Instant::now();
     let mut last_debug_print = Instant::now();
 
-    // Stage 1 loudness detector: exponentially smoothed RMS power.
+    // Stage 1 loudness detector: exponentially smoothed RMS power from
+    // the detector-only sidechain.
     let mut loudness_mean_sq = 0.0_f64;
+    let mut raw_loudness_mean_sq = 0.0_f64;
     let mut last_loudness_db = -100.0_f32;
     const LOUDNESS_SMOOTHING_SECONDS: f32 = 0.8;
+
+    // The sidechain filters only the Stage 1 detector signal. The raw audio
+    // remains untouched for peak protection and output.
+    let mut sidechain = SidechainFilter::new(48_000, 2, 120.0);
+
+    // PipeWire publishes the negotiated format asynchronously.
+    let negotiated_sample_rate = Arc::new(AtomicU32::new(48_000));
+    let negotiated_channels = Arc::new(AtomicU32::new(2));
 
     let mut printed_first_buffer = false;
     let mut session_peak_db = -100.0_f32;
@@ -104,9 +119,12 @@ pub fn start_global_capture(
 
     let runtime_for_closure = runtime.clone();
 
+    let format_sample_rate = negotiated_sample_rate.clone();
+    let format_channels = negotiated_channels.clone();
+
     let _listener = stream
         .add_local_listener_with_user_data(())
-        .param_changed(|_stream, _data, id, pod| {
+        .param_changed(move |_stream, _data, id, pod| {
             if id == ParamType::Format.as_raw()
                 && let Some(pod) = pod
             {
@@ -120,6 +138,9 @@ pub fn start_global_capture(
                             info.channels(),
                             info.rate()
                         );
+
+                        format_sample_rate.store(info.rate().max(1), Ordering::Relaxed);
+                        format_channels.store(info.channels().max(1), Ordering::Relaxed);
                     }
 
                     Err(err) => {
@@ -140,8 +161,10 @@ pub fn start_global_capture(
             {
                 leveler.reset();
                 peak_limiter.reset();
+                sidechain.reset();
                 session_peak_db = -100.0;
                 loudness_mean_sq = 0.0;
+                raw_loudness_mean_sq = 0.0;
                 last_loudness_db = -100.0;
 
                 println!("🎚️ Leveler reset to neutral gain");
@@ -157,7 +180,9 @@ pub fn start_global_capture(
                             // Always reset when toggling.
                             leveler.reset();
                             peak_limiter.reset();
+                            sidechain.reset();
                             loudness_mean_sq = 0.0;
+                            raw_loudness_mean_sq = 0.0;
                             last_loudness_db = -100.0;
                             session_peak_db = -100.0;
 
@@ -179,7 +204,13 @@ pub fn start_global_capture(
 
             let mut peak_db = -100.0_f32;
             let mut buffer_sum_sq = 0.0_f64;
+            let mut filtered_buffer_sum_sq = 0.0_f64;
             let mut buffer_samples = 0usize;
+
+            let sample_rate = negotiated_sample_rate.load(Ordering::Relaxed).max(1);
+            let channels = negotiated_channels.load(Ordering::Relaxed).max(1) as usize;
+
+            sidechain.reconfigure(sample_rate, channels);
 
             // PipeWire may give us more than one data block.
             for data in datas.iter_mut() {
@@ -210,12 +241,17 @@ pub fn start_global_capture(
                     continue;
                 }
 
-                // Measure RMS power for this audio callback.
-                let sum_sq: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
+                // Raw RMS is retained for telemetry only.
+                let raw_sum_sq: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
 
-                buffer_sum_sq += sum_sq;
+                buffer_sum_sq += raw_sum_sq;
                 buffer_samples += samples.len();
 
+                // Detector-only path. The original samples are never modified.
+                let filtered_mean_sq = sidechain.mean_square(samples, channels);
+                filtered_buffer_sum_sq += filtered_mean_sq * samples.len() as f64;
+
+                // Stage 2 continues to use the raw peak.
                 let peak = peak_dbfs(samples);
                 peak_db = peak_db.max(peak);
 
@@ -252,9 +288,13 @@ pub fn start_global_capture(
 
             last_tick = now;
 
-            // Stage 1: exponentially smooth RMS power over roughly 0.8s.
+            // Stage 1: exponentially smooth raw and filtered RMS over
+            // roughly 0.8s. Only filtered RMS drives the Leveler.
+            let mut raw_rms_db = -100.0_f32;
+
             if buffer_samples > 0 {
-                let buffer_mean_sq = buffer_sum_sq / buffer_samples as f64;
+                let buffer_raw_mean_sq = buffer_sum_sq / buffer_samples as f64;
+                let buffer_filtered_mean_sq = filtered_buffer_sum_sq / buffer_samples as f64;
 
                 let alpha = if LOUDNESS_SMOOTHING_SECONDS > 0.0 {
                     1.0_f64 - (-f64::from(dt) / f64::from(LOUDNESS_SMOOTHING_SECONDS)).exp()
@@ -262,17 +302,28 @@ pub fn start_global_capture(
                     1.0
                 };
 
-                loudness_mean_sq += (buffer_mean_sq - loudness_mean_sq) * alpha.clamp(0.0, 1.0);
+                let alpha = alpha.clamp(0.0, 1.0);
 
-                last_loudness_db = if loudness_mean_sq > 0.0 {
+                raw_loudness_mean_sq += (buffer_raw_mean_sq - raw_loudness_mean_sq) * alpha;
+                loudness_mean_sq += (buffer_filtered_mean_sq - loudness_mean_sq) * alpha;
+
+                raw_rms_db = if raw_loudness_mean_sq > 1.0e-10 {
+                    (10.0 * raw_loudness_mean_sq.log10() as f32).max(-100.0)
+                } else {
+                    -100.0
+                };
+
+                last_loudness_db = if loudness_mean_sq > 1.0e-10 {
                     (10.0 * loudness_mean_sq.log10() as f32).max(-100.0)
                 } else {
                     -100.0
                 };
             }
 
+            let detector_delta_db = raw_rms_db - last_loudness_db;
+
             let loudness_gain_db = if enabled {
-                leveler.process(last_loudness_db, dt)
+                leveler.process(last_loudness_db, peak_db, dt)
             } else {
                 0.0
             };
@@ -295,10 +346,13 @@ pub fn start_global_capture(
             // UI/debug update once per second.
             if now.duration_since(last_debug_print).as_secs_f32() >= 1.0 {
                 println!(
-                    "🎧 Speaker meter: Smoothed RMS {:.1} dB | Current Peak {:.1} dB \
+                    "🎧 Speaker meter: Raw RMS {:.1} dB | Filtered RMS {:.1} dB \
+                     | Δ {:.1} dB | Current Peak {:.1} dB \
                      (session max {:.1} dB) | loudness gain {:+.1} dB | \
                      peak gain {:+.1} dB | final {:+.1} dB | {} node(s) receiving it",
+                    raw_rms_db,
                     last_loudness_db,
+                    detector_delta_db,
                     peak_db,
                     session_peak_db,
                     loudness_gain_db,

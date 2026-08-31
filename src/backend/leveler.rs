@@ -25,13 +25,13 @@ pub struct LevelerConfig {
 impl Default for LevelerConfig {
     fn default() -> Self {
         Self {
-            target_db: -20.0,
+            target_db: -21.5,
 
             // Main leveler handles sustained scene differences.
             max_cut_db: 15.0,
 
             // Quiet dialogue is now allowed to come up substantially.
-            max_boost_db: 6.0,
+            max_boost_db: 4.0,
 
             // Do not amplify true silence/noise floor.
             gate_threshold_db: -55.0,
@@ -65,9 +65,13 @@ impl Leveler {
     /// Quiet non-silent material is boosted.
     /// Sustained loud material is attenuated.
     /// Silence is never boosted.
-    pub fn process(&mut self, level_db: f32, dt_secs: f32) -> f32 {
+    ///
+    /// Positive gain is reduced when the current peak indicates that the
+    /// quiet RMS is accompanied by strong music/effects/transients.
+    pub fn process(&mut self, level_db: f32, peak_db: f32, dt_secs: f32) -> f32 {
         let cfg = &self.config;
         let level_db = level_db.clamp(-100.0, 0.0);
+        let peak_db = peak_db.clamp(-100.0, 0.0);
 
         let (desired_gain_db, time_constant) = if level_db < cfg.gate_threshold_db {
             // Actual silence: never amplify it.
@@ -75,7 +79,46 @@ impl Leveler {
         } else {
             let error_db = cfg.target_db - level_db;
 
-            let desired = error_db.clamp(-cfg.max_cut_db, cfg.max_boost_db);
+            let mut desired = error_db.clamp(-cfg.max_cut_db, cfg.max_boost_db);
+
+            // Apply slightly stronger correction only when sustained content
+            // is above the target. Positive dialogue/content boost remains
+            // governed by the existing crest-factor logic.
+            if desired < 0.0 {
+                desired *= 1.35;
+                desired = desired.max(-cfg.max_cut_db);
+            }
+
+            // Only limit positive boost. Sustained attenuation is left
+            // unchanged and continues to be handled by the leveler.
+            if desired > 0.0 && peak_db > -100.0 {
+                // Compare the instantaneous peak with the smoothed RMS
+                // estimate. A large crest factor is more consistent with
+                // speech/transient material; a small crest factor suggests
+                // dense music or sustained effects, where boosting the whole
+                // mix is less desirable.
+                let crest_db = (peak_db - level_db).max(0.0);
+
+                // Keep boost very conservative for dense material.
+                // Low crest factors are more likely to represent sustained
+                // music/effects, while larger crest factors leave more room
+                // for useful quiet-content/dialogue boost.
+                let boost_factor = if crest_db <= 4.0 {
+                    0.0
+                } else if crest_db < 8.0 {
+                    0.25 * (crest_db - 4.0) / 4.0
+                } else if crest_db < 12.0 {
+                    0.25 + 0.35 * (crest_db - 8.0) / 4.0
+                } else if crest_db < 16.0 {
+                    0.60 + 0.40 * (crest_db - 12.0) / 4.0
+                } else {
+                    1.0
+                };
+
+                let boost_limit = cfg.max_boost_db * boost_factor;
+
+                desired = desired.min(boost_limit);
+            }
 
             // Moving toward more attenuation = attack.
             // Moving toward more boost = release.
@@ -138,7 +181,7 @@ mod tests {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-20.0, 0.05);
+            leveler.process(-22.5, -22.5, 0.05);
         }
 
         assert!(leveler.current_gain_db().abs() < 0.1);
@@ -149,24 +192,24 @@ mod tests {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-35.0, 0.1);
+            leveler.process(-35.0, -15.0, 0.1);
         }
 
         assert!(
-            leveler.current_gain_db() > 5.0,
-            "quiet dialogue should be boosted, got {} dB",
+            leveler.current_gain_db() > 2.0,
+            "quiet dialogue should receive meaningful boost, got {} dB",
             leveler.current_gain_db()
         );
 
-        assert!(leveler.current_gain_db() <= 6.0);
+        assert!(leveler.current_gain_db() <= 4.0);
     }
 
     #[test]
     fn attack_moves_gradually_with_small_dt() {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
-        let first = leveler.process(0.0, 0.05);
-        let second = leveler.process(0.0, 0.05);
+        let first = leveler.process(0.0, 0.0, 0.05);
+        let second = leveler.process(0.0, 0.0, 0.05);
 
         assert!(first > -1.01, "first step should be gradual, got {first}");
         assert!(
@@ -180,11 +223,89 @@ mod tests {
     }
 
     #[test]
+    fn reduces_boost_for_dense_quiet_content() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            leveler.process(-35.0, -32.0, 0.1);
+        }
+
+        assert!(
+            leveler.current_gain_db() < 3.0,
+            "dense quiet content should receive limited boost, got {} dB",
+            leveler.current_gain_db()
+        );
+    }
+
+    #[test]
+    fn suppresses_boost_for_low_crest_content() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            leveler.process(-35.0, -25.0, 0.1);
+        }
+
+        assert!(
+            leveler.current_gain_db() < 2.5,
+            "low-crest quiet content should receive conservative boost, got {} dB",
+            leveler.current_gain_db()
+        );
+    }
+
+    #[test]
+    fn strongly_limits_boost_for_dense_material() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            leveler.process(-35.0, -30.0, 0.1);
+        }
+
+        assert!(
+            leveler.current_gain_db() < 1.1,
+            "dense material should receive very little boost, got {} dB",
+            leveler.current_gain_db()
+        );
+    }
+
+    #[test]
+    fn allows_more_boost_as_crest_increases() {
+        let mut dense = Leveler::new(LevelerConfig::default());
+        let mut speech_like = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            dense.process(-35.0, -28.0, 0.1);
+            speech_like.process(-35.0, -19.0, 0.1);
+        }
+
+        assert!(
+            speech_like.current_gain_db() > dense.current_gain_db(),
+            "higher crest factor should allow more boost"
+        );
+        assert!(speech_like.current_gain_db() <= 4.0);
+    }
+
+    #[test]
+    fn preserves_more_boost_for_high_crest_content() {
+        let mut leveler = Leveler::new(LevelerConfig::default());
+
+        for _ in 0..100 {
+            leveler.process(-35.0, -15.0, 0.1);
+        }
+
+        assert!(
+            leveler.current_gain_db() > 3.0,
+            "high-crest quiet content should retain strong boost, got {} dB",
+            leveler.current_gain_db()
+        );
+        assert!(leveler.current_gain_db() <= 4.0);
+    }
+
+    #[test]
     fn suppresses_sustained_loud_content() {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-5.0, 0.1);
+            leveler.process(-5.0, -5.0, 0.1);
         }
 
         assert!(
@@ -199,7 +320,7 @@ mod tests {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-90.0, 0.1);
+            leveler.process(-90.0, -90.0, 0.1);
         }
 
         assert!(
@@ -214,13 +335,13 @@ mod tests {
         let mut leveler = Leveler::new(LevelerConfig::default());
 
         for _ in 0..100 {
-            leveler.process(-5.0, 0.1);
+            leveler.process(-5.0, -5.0, 0.1);
         }
 
         let before = leveler.current_gain_db();
 
         for _ in 0..200 {
-            leveler.process(-90.0, 0.1);
+            leveler.process(-90.0, -90.0, 0.1);
         }
 
         assert!(before < -1.0);

@@ -7,9 +7,8 @@ Built with:
 - Rust
 - GTK4
 - PipeWire
-- Flatpak
 
-OneVolume continuously analyzes the audio level of active media locally and dynamically adjusts gain to make loud and quiet sections more comfortable to listen to.
+OneVolume continuously analyzes active media audio locally and dynamically adjusts gain to make loud and quiet sections more comfortable to listen to.
 
 > ⚠️ **Beta software:** OneVolume is currently in beta development. Bugs, unexpected behavior, and incomplete functionality may still occur.
 
@@ -21,400 +20,245 @@ OneVolume continuously analyzes the audio level of active media locally and dyna
 - 🔊 Fast response to sudden loud peaks
 - 📉 Gradual recovery after loud sections
 - 🎧 PipeWire audio capture
-- 🧠 Smoothed peak detection using a peak follower
-- 🌐 Firefox and Brave media detection
-- 🎬 Designed for movies, trailers, videos, and other media
+- 🧠 RMS and peak-based audio analysis
+- 🎛️ Dynamic per-application PipeWire volume control
+- 🌐 Firefox media detection
+- 🌐 Brave media detection
+- 🎬 VLC media player support
 - 🖥️ GTK4 desktop interface
-- 📦 Flatpak packaging
+- 📦 AppImage distribution
 - 🔐 GPG-signed Git release tags
-- #️⃣ SHA-256 release checksum
+- #️⃣ SHA-256 release checksums
 
 ---
 
 ## How It Works
 
-OneVolume monitors the audio level of active media and calculates an appropriate gain adjustment.
+OneVolume monitors the audio level of supported media applications and calculates an appropriate gain adjustment.
 
 The leveler uses two complementary measurements:
 
 - **RMS level** — represents the general loudness of the audio.
 - **Peak level** — detects sudden loud sounds and transients.
 
-Peak detection uses a **peak follower**:
+Peak detection uses a peak follower:
 
-- Peaks rise immediately.
+- Peaks rise quickly.
 - Peaks decay gradually.
-- A single quiet audio buffer cannot immediately make the detector release.
-- Sudden loud sounds can still trigger fast protection.
+- A single quiet buffer does not immediately release the detector.
+- Sudden loud sounds can trigger fast protection.
 
 The goal is to reduce large volume jumps without aggressively changing normal dialogue or quiet sections.
 
+All audio analysis and gain calculation are performed locally on the user's machine.
+
 ---
 
-## Installation
+## Distribution
 
-## Recommended: Flatpak
+### Recommended: AppImage
 
-The easiest way to use OneVolume is to install the pre-built Flatpak from the GitHub Releases page:
+AppImage is currently the recommended distribution format for OneVolume.
+
+OneVolume needs to interact with the PipeWire audio streams of other desktop applications in order to dynamically control their volume. The native Linux build and AppImage have been tested successfully with:
+
+- VLC
+- Brave
+- Firefox
+
+### Download
+
+Download the latest AppImage from the GitHub Releases page:
 
 https://github.com/3v1l1/OneVolume/releases
 
-### Requirements
-
-You need:
-
-- Linux
-- Flatpak
-- PipeWire audio
-
-You **do not need** Rust, Cargo, GTK development packages, PipeWire development packages, `pkg-config`, or Flatpak Builder to run the released Flatpak.
-
-### Install Flatpak
-
-#### openSUSE
+Make it executable:
 
 ```bash
-sudo zypper install flatpak
-```
+chmod +x OneVolume-x86_64.AppImage
 
-#### Fedora
+Run it:
 
-```bash
-sudo dnf install flatpak
-```
+./OneVolume-x86_64.AppImage
 
-#### Debian / Ubuntu / Linux Mint
+No Rust toolchain or development packages are required to run the released AppImage.
 
-```bash
-sudo apt install flatpak
-```
+Verify Your Download
 
-#### Arch / Manjaro
+Each release provides a SHA256SUMS file.
 
-```bash
-sudo pacman -S flatpak
-```
+After downloading the AppImage and SHA256SUMS, verify the file:
 
-## Install OneVolume
-
-Download the latest `.flatpak` file from the GitHub Releases page.
-
-Then install it:
-
-```bash
-flatpak install --user ./OneVolume-*.flatpak
-```
-
-Run:
-
-```bash
-flatpak run com.onevolume.OneVolume
-```
-
----
-
-## Verify the Download
-
-OneVolume releases provide SHA-256 checksums, and release tags are GPG-signed.
-
-### SHA-256
-
-Download the `.flatpak` file and its corresponding `.sha256` file.
-
-Then run:
-
-```bash
-sha256sum -c OneVolume-<version>.flatpak.sha256
-```
+sha256sum -c SHA256SUMS
 
 A successful verification looks like:
 
-```text
-OneVolume-<version>.flatpak: OK
-```
+OneVolume-x86_64.AppImage: OK
 
-The checksum confirms that the downloaded Flatpak matches the exact file published by the release.
+The SHA-256 checksum verifies the integrity of the downloaded file against the checksum published with the release.
 
-### GPG Verification
+GPG-signed release tags
 
-Release tags are GPG-signed so the tagged source history can be authenticated.
+Git release tags are GPG-signed.
 
-Verify a tag with:
+To verify a tag after cloning the repository:
 
-```bash
-git verify-tag v0.4.0-beta.1
-```
+git verify-tag v0.5.0-beta.1
+
+You should only trust a signed tag after verifying that its signing key belongs to the expected project maintainer.
 
 Never publish or share your private GPG key.
 
-## Build From Source
+Flatpak Status
 
-Building OneVolume from source requires additional development packages.
+Flatpak packaging is currently experimental and not the recommended distribution format.
 
-### Required Build Dependencies
+OneVolume can detect and capture supported applications through PipeWire when sandboxed, but the Flatpak sandbox currently prevents reliable cross-application volume control required by OneVolume.
 
-You need:
+For this reason, the supported release format for v0.5.0-beta.1 is AppImage.
 
-- Rust / Cargo
-- GTK4 development files
-- PipeWire development files
-- `pkg-config`
-- Flatpak
-- Flatpak Builder
+The Flatpak manifest remains in the repository for development and future investigation.
 
-The GTK4 and PipeWire development packages are required for building, not for running the pre-built Flatpak.
-
-### Rust
-
-The recommended way to install Rust is through `rustup`:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-After installation, restart your terminal or load the Cargo environment:
-
-```bash
-source "$HOME/.cargo/env"
-```
-
-Verify:
-
-```bash
-rustc --version
-cargo --version
-```
-
-### Build Dependencies by Distribution
-
-#### openSUSE
-
-```bash
-sudo zypper install \
-  flatpak \
-  flatpak-builder \
-  gtk4-devel \
-  pipewire-devel \
-  pkgconf-pkg-config
-```
-
-Install Rust separately using `rustup` as described above.
-
-#### Fedora
-
-```bash
-sudo dnf install \
-  flatpak \
-  flatpak-builder \
-  gtk4-devel \
-  pipewire-devel \
-  pkgconf-pkg-config
-```
-
-Install Rust separately using `rustup` as described above.
-
-#### Debian / Ubuntu / Linux Mint
-
-```bash
-sudo apt install \
-  flatpak \
-  flatpak-builder \
-  libgtk-4-dev \
-  libpipewire-0.3-dev \
-  pkg-config
-```
-
-Install Rust separately using `rustup` as described above.
-
-#### Arch / Manjaro
-
-```bash
-sudo pacman -S \
-  flatpak \
-  flatpak-builder \
-  gtk4 \
-  pipewire \
-  pkgconf
-```
-
-Install Rust separately using `rustup` as described above.
-
-### Clone the Repository
-
-```bash
-git clone https://github.com/3v1l1/OneVolume.git
-cd OneVolume
-```
-
-### Build the Application
-
-Build the Rust application:
-
-```bash
-cargo build --release
-```
-
-The resulting binary will be:
-
-```text
-target/release/onevolume
-```
-
-### Run From Source
-
-You can run the application directly after building:
-
-```bash
-cargo run --release
-```
-
-### Build the Flatpak
-
-Build the Flatpak using the included manifest:
-
-```bash
-flatpak-builder \
-  --user \
-  --install \
-  --force-clean \
-  build-dir \
-  packaging/com.onevolume.OneVolume.yml
-```
-
-Then run:
-
-```bash
-flatpak run com.onevolume.OneVolume
-```
-
-### Flatpak Permissions
-
-OneVolume runs inside a Flatpak sandbox.
-
-The current application manifest grants access to:
-
-- Wayland
-- X11 fallback
-- PulseAudio compatibility
-- Native PipeWire socket
-
-These permissions are required for the application's graphical interface, hardware-accelerated rendering, and audio functionality.
-
-OneVolume does not require unrestricted filesystem access.
-
----
-
-## Supported Media Detection
+Supported Applications
 
 Current testing includes:
 
-- Firefox
-- Brave
+Firefox
+Brave
+VLC
 
-Media detection and audio behavior are still under active development.
+Application detection, audio processing, and volume behavior are still under active development.
 
----
-
-## Current Status
-
-### Beta
-
-OneVolume is currently in the **0.4.0-beta.1** development stage.
+Current Status
+v0.5.0-beta.1
 
 Current functionality includes:
 
-- GTK4 interface
-- PipeWire audio capture
-- RMS level detection
-- Peak detection
-- Smoothed peak following
-- Dynamic gain adjustment
-- Fast response to loud peaks
-- Gradual gain recovery
-- Silence handling
-- Firefox media testing
-- Brave media testing
-- Flatpak packaging
-- GPG-signed Git release tags
-- SHA-256 release verification
+GTK4 interface
+PipeWire audio capture
+RMS level detection
+Peak detection
+Smoothed peak following
+Dynamic gain adjustment
+Fast response to loud peaks
+Gradual gain recovery
+Silence handling
+Per-application PipeWire volume control
+Firefox testing
+Brave testing
+VLC testing
+AppImage distribution
+GPG-signed release tags
+SHA-256 release verification
 
 The application is functional, but the audio-leveling algorithm continues to be tested and refined.
 
----
+Privacy
 
-## Testing
+OneVolume processes the audio it analyzes locally on the user's Linux system.
 
-The project includes automated Rust tests for the leveler and peak detection logic.
+The application does not require a cloud service for its audio-leveling function.
 
-Run:
+OneVolume needs access to the local audio system in order to observe supported media streams and adjust their playback volume. It does not require unrestricted filesystem access for normal operation.
 
-```bash
-cargo test
-```
+Build From Source
+Requirements
 
-Format the source:
+You need:
 
-```bash
-cargo fmt
-```
+Linux
+Rust / Cargo
+GTK4 development files
+PipeWire development files
+pkg-config
+Rust
+
+The recommended way to install Rust is through rustup:
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+Then load the Cargo environment:
+
+source "$HOME/.cargo/env"
+
+Verify:
+
+rustc --version
+cargo --version
+Build Dependencies
+openSUSE
+sudo zypper install \
+  gtk4-devel \
+  pipewire-devel \
+  pkgconf-pkg-config
+Fedora
+sudo dnf install \
+  gtk4-devel \
+  pipewire-devel \
+  pkgconf-pkg-config
+Debian / Ubuntu / Linux Mint
+sudo apt install \
+  libgtk-4-dev \
+  libpipewire-0.3-dev \
+  pkg-config
+Arch / Manjaro
+sudo pacman -S \
+  gtk4 \
+  pipewire \
+  pkgconf
+Clone the Repository
+git clone https://github.com/3v1l1/OneVolume.git
+cd OneVolume
+Build
+cargo build --release
+
+The resulting binary is:
+
+target/release/onevolume
+Run From Source
+cargo run --release
+Testing
+
+Run the automated tests:
+
+cargo test --all-targets --all-features
 
 Check formatting:
 
-```bash
 cargo fmt --check
-```
 
-Check compilation:
+Run Clippy with warnings treated as errors:
 
-```bash
-cargo check
-```
+cargo clippy --all-targets --all-features -- -D warnings
 
-For changes affecting audio processing, testing with real media playback is strongly recommended.
+For changes affecting audio processing or volume control, testing with real media playback is strongly recommended.
 
----
+Contributing
 
-## Release Verification
-
-Released Flatpak builds are accompanied by:
-
-- SHA-256 checksums
-- GPG-signed Git release tags
-
-GitHub Releases:
-
-https://github.com/3v1l1/OneVolume/releases
-
----
-
-## Contributing
-
-OneVolume is open source and contributions are welcome.
+Contributions are welcome.
 
 Before submitting changes, please run:
 
-```bash
-cargo fmt
-cargo check
-cargo test
-```
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
 
-For changes affecting audio processing, testing with real media playback is strongly recommended.
+For audio-related changes, test with real media playback using supported applications.
 
----
+Security
 
-## License
+Please do not disclose security vulnerabilities publicly before giving the project maintainer an opportunity to investigate and fix them.
 
-OneVolume is licensed under the **Apache License 2.0**.
+See SECURITY.md for vulnerability-reporting guidance.
 
-See [`LICENSE`](LICENSE) for the complete license text.
+License
 
----
+OneVolume is licensed under the Apache License 2.0.
 
-## Project
+See LICENSE for the complete license text.
+
+Project
 
 GitHub:
 
 https://github.com/3v1l1/OneVolume
-
-OneVolume is a Linux-focused project built around Rust, GTK4, PipeWire, and Flatpak.

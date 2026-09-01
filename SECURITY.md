@@ -2,38 +2,40 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in OneVolume, please report it privately.
+Please do not publicly disclose a suspected security vulnerability before it has been investigated.
 
-Please use GitHub's **Private Vulnerability Reporting** feature for this repository:
+For security issues, please use GitHub's Private Vulnerability Reporting feature:
 
 https://github.com/3v1l1/OneVolume/security/advisories/new
 
 Please do not open a public GitHub issue for an undisclosed security vulnerability.
 
-When reporting a vulnerability, include:
+When reporting an issue, please include:
 
-- A clear description of the issue
+- A clear description of the vulnerability
 - Steps to reproduce it
-- The affected version or commit
-- The potential impact
-- Any relevant logs or proof-of-concept information
+- The affected OneVolume version or commit
+- Any relevant logs, screenshots, or proof-of-concept details
 
-Please avoid including passwords, private keys, personal information, or other sensitive data unless absolutely necessary.
+Please avoid including secrets, private keys, passwords, personal data, or other sensitive information in reports.
 
 ## Supported Versions
 
-OneVolume is currently in beta development.
+Security fixes will be prioritized for actively maintained releases and the current development version.
 
-Security fixes are primarily provided for the latest release.
+Beta releases may contain known bugs and incomplete security hardening.
 
-| Version | Supported |
-| --- | --- |
-| Latest beta | ✅ |
-| Older beta / alpha releases | ⚠️ Best effort |
-| Unreleased development builds | ❌ |
+## Scope
 
-## Disclosure
+OneVolume is a Linux desktop application that interacts with the local PipeWire audio system to observe supported media streams and adjust playback volume.
 
-Please allow reasonable time for the issue to be investigated and, where appropriate, fixed before publicly disclosing technical details.
+Because OneVolume is distributed as an AppImage, it does not provide the same sandbox isolation as a Flatpak application. Users should only run OneVolume builds obtained from a trusted source and should verify release checksums where provided.
 
-Thank you for helping keep OneVolume and its users secure.
+## Release Integrity
+
+Official releases may include:
+
+- SHA-256 checksums for release artifacts
+- GPG-signed Git release tags
+
+Users should verify these integrity and authenticity mechanisms where possible before running a release.

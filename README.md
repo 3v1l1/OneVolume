@@ -52,9 +52,13 @@ This allows the leveler to respond continuously while media is playing.
 
 OneVolume currently supports detection and volume control for:
 
-VLC
-Firefox
-Brave
+- Firefox
+- Brave
+- Chromium
+- Google Chrome
+- Microsoft Edge
+- VLC
+- Discord
 
 Additional applications may work when they expose their audio streams through PipeWire in a compatible way.
 

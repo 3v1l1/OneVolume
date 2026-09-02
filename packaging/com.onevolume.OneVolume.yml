@@ -14,7 +14,6 @@ finish-args:
   - --device=dri
 
   # Audio
-  - --socket=pulseaudio
 
   # Native PipeWire socket
   - --filesystem=xdg-run/pipewire-0

@@ -36,7 +36,7 @@ sha256sum -c SHA256SUMS
 
 For release authenticity, verify the signed Git tag when applicable.
 
-To verify: `gpg --import docs/gpg-public-key.asc` then `git tag -v v0.4.0-beta.1`.
+To verify: `gpg --import docs/gpg-public-key.asc` then `git tag -v v0.5.0-beta.1`.
 
 Key fingerprint: `02CE 0A43 1158 28F6 88E1 4DCB 6AE7 B5AC F7AE 61B1`
 

@@ -36,6 +36,10 @@ sha256sum -c SHA256SUMS
 
 For release authenticity, verify the signed Git tag when applicable.
 
+To verify: `gpg --import docs/gpg-public-key.asc` then `git tag -v v0.4.0-beta.1`.
+
+Key fingerprint: `02CE 0A43 1158 28F6 88E1 4DCB 6AE7 B5AC F7AE 61B1`
+
 🔊 How it works
 
 OneVolume monitors the system's audio output through PipeWire and calculates a target gain based on the detected loudness.
